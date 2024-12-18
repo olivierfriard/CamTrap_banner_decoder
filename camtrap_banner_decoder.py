@@ -1,19 +1,41 @@
 """
-rename file using date and time extracted from the camera-trap bottom video banner
+camtrap_banner_decoder
+Copyright 2024 Olivier Friard
+
+
+Rename file using date and time extracted from the camera-trap bottom video/picture banner
 
 Require: tesseract program (see https://github.com/tesseract-ocr/tesseract)
 
 Usage:
-python extract_data.py -d INPUT_DIRECTORY
+python camtrap_banner_decoder.py.py -d INPUT_DIRECTORY
     show extracted information
 
-python extract_data.py -d INPUT_DIRECTORY --rename
-    show extracted information and rename file like YYYY-MM-DD_hhmmss_OLD-FILE-NAME
+python camtrap_banner_decoder.py.py -d INPUT_DIRECTORY --debug
+    show more information
+
+python camtrap_banner_decoder.py.py -d INPUT_DIRECTORY --rename
+    show extracted information and rename file like YYYY-MM-DD_hhmmss_CAMTRAP-ID_OLD-FILE-NAME
 
 
-
-moon phase
+For moon phase see:
 https://pyorbital.readthedocs.io/en/feature-moon-phase/moon_calculations.html
+
+
+  camtrap_banner_decoder is free software; you can redistribute it and/or modify
+  it under the terms of the GNU General Public License as published by
+  the Free Software Foundation; either version 3 of the License, or
+  any later version.
+
+  camtrap_banner_decoder is distributed in the hope that it will be useful,
+  but WITHOUT ANY WARRANTY; without even the implied warranty of
+  MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+  GNU General Public License for more details.
+
+  You should have received a copy of the GNU General Public License
+  along with this program; if not see <http://www.gnu.org/licenses/>.
+
+
 """
 
 import argparse
@@ -26,23 +48,36 @@ from pathlib import Path
 EXTENSIONS = {".avi", ".mp4", ".jpg", ".jpeg"}
 
 
-def banner_text_from_frame(frame, roi_height_fraction: float = 0.15, debug=False):
+def banner_text_from_frame(frame, roi_height_fraction: float = 0.15, debug=False, file_path=""):
+    """
+    extract text from frame banner
+    """
+
     extracted_text = None
     # Get frame dimensions
     frame_height, frame_width, _ = frame.shape
 
     if debug:
-        print(f"image dimention: {frame_height}x{frame_width}")
+        print(f"image original dimention: {frame_height}x{frame_width}")
+
+    if frame_width > 2592:
+        aspect_ratio = frame_height / frame_width
+        new_width = 1280
+        new_height = int(new_width * aspect_ratio)
+        frame = cv2.resize(frame, (new_width, new_height))
+        frame_height, frame_width, _ = frame.shape
+
+        if debug:
+            print(f"image resized dimention: {frame_height}x{frame_width}")
 
     # Define the region of interest (ROI)
     roi_height = int(frame_height * roi_height_fraction)
     roi = frame[frame_height - roi_height : frame_height, 0:frame_width]
 
     # Save the first sampled frame for inspection
-    """
-    if extracted_text is None:
-        cv2.imwrite(Path(video_path).with_suffix(".jpg"), roi)
-    """
+
+    if file_path:
+        cv2.imwrite(Path(file_path).with_suffix(".jpeg"), roi)
 
     # Convert ROI to grayscale
     roi_gray = cv2.cvtColor(roi, cv2.COLOR_BGR2GRAY)
@@ -103,13 +138,16 @@ def extract_banner_text_from_image(image_path, roi_height_fraction=0.15, debug=F
     if frame is None:
         return "Error: Unable to load the image. Check the file path."
 
-    extracted_text = banner_text_from_frame(frame, roi_height_fraction, debug=debug)
+    extracted_text = banner_text_from_frame(frame, roi_height_fraction, debug=debug, file_path=image_path)
 
     return extracted_text
 
 
 def extract_date_time(path_file, debug=False):
-    # Extract text from the video
+    """
+    extract info from the picture/video banner
+    """
+
     banner_text = None
 
     if Path(path_file).suffix.lower() in (".avi", ".mp4"):
@@ -119,7 +157,7 @@ def extract_date_time(path_file, debug=False):
         banner_text = extract_banner_text_from_image(path_file, debug=debug)
 
     if banner_text is None:
-        return None, None, None
+        return {"error": ""}
 
     for text in banner_text.split("\n"):
         # The input string
