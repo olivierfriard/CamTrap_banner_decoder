@@ -250,7 +250,7 @@ def main():
     parser.add_argument("--cam-id", action="store", dest="cam_id", default="", help="CAM_ID default")
     parser.add_argument("--rename", action="store_true", dest="rename", default="", help="Rename files")
     parser.add_argument("--debug", action="store_true", dest="debug", help="Enable debug mode")
-    parser.add_argument("--version", action="store_true", dest="version", help="Display version")
+    parser.add_argument("-v", "--version", action="store_true", dest="version", help="Display version")
 
     # Parse the command-line arguments
     args = parser.parse_args()
