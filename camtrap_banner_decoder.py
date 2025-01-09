@@ -253,11 +253,21 @@ def main():
     parser.add_argument("-d", "--directory", action="store", dest="input_directory", default="", help="Directory with media files")
     parser.add_argument("--cam-id", action="store", dest="cam_id", default="", help="CAM_ID default")
     parser.add_argument("--rename", action="store_true", dest="rename", default="", help="Rename files")
+    parser.add_argument("--tesseract", action="store", dest="tesseract_cmd", default="", help="Rename files")
+
     parser.add_argument("--debug", action="store_true", dest="debug", help="Enable debug mode")
     parser.add_argument("-v", "--version", action="store_true", dest="version", help="Display version")
 
     # Parse the command-line arguments
     args = parser.parse_args()
+
+    if args.tesseract_cmd:
+        print(f"Using {args.tesseract_cmd}")
+        if args.tesseract_cmd == "tesseract" or Path(args.tesseract_cmd).is_file():
+            pytesseract.pytesseract.tesseract_cmd = args.tesseract_cmd
+        else:
+            print(f"The tesseract path {args.tesseract_cmd} was not found")
+            sys.exit()
 
     if args.version:
         print(f"camtrap_banner_decoder v. {__version__}\n")
