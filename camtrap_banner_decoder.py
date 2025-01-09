@@ -246,7 +246,7 @@ def main():
 
     parser.add_argument("-d", "--directory", action="store", dest="input_directory", default="", help="Directory with media files")
     parser.add_argument("--cam-id", action="store", dest="cam_id", default="", help="CAM_ID default")
-    parser.add_argument("--rename", action="store", dest="rename", default="", help="Rename files")
+    parser.add_argument("--rename", action="store_true", dest="rename", default="", help="Rename files")
     parser.add_argument("--debug", action="store_true", help="Enable debug mode")
 
     # Parse the command-line arguments
