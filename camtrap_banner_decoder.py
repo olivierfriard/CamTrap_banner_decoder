@@ -45,6 +45,8 @@ import pytesseract
 import re
 from pathlib import Path
 
+__version__ = "0.0.1"
+
 EXTENSIONS = {".avi", ".mp4", ".jpg", ".jpeg"}
 
 
@@ -284,6 +286,8 @@ def main():
                     data["cam_id"] = "CAM-ID"
 
             new_file_path = Path(file_path).parent / f"{data['date']}_{data['time']}_{data['cam_id']}_{file_path.name}"
+
+            # check if file already renamed
             if str(Path(file_path).name).count("-") == 2:
                 print(f"{Path(file_path).name} already renammed")
             else:
