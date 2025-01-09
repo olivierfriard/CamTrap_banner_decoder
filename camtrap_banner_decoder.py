@@ -256,7 +256,7 @@ def main():
     args = parser.parse_args()
 
     if args.version:
-        print(f"v. {__version__}\n")
+        print(f"camtrap_banner_decoder v. {__version__}\n")
         sys.exit()
 
     if Path(args.input_directory).is_dir():
