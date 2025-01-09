@@ -85,7 +85,11 @@ def banner_text_from_frame(frame, roi_height_fraction: float = 0.15, debug=False
     roi_gray = cv2.cvtColor(roi, cv2.COLOR_BGR2GRAY)
 
     # Apply OCR to extract text
-    extracted_text = pytesseract.image_to_string(roi_gray, config="--psm 6")
+    try:
+        extracted_text = pytesseract.image_to_string(roi_gray, config="--psm 6")
+    except Exception:
+        print("Tesseract error")
+        sys.exit()
 
     if debug:
         print(f"{extracted_text=}")
