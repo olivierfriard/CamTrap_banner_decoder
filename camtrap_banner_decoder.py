@@ -1,9 +1,11 @@
 """
 camtrap_banner_decoder
-Copyright 2024 Olivier Friard
+Copyright 2024-2025 Olivier Friard
 
 
 Rename file using date and time extracted from the camera-trap bottom video/picture banner
+Video files can be re-encoded with ffmpeg (if present)
+Metadata 'Date/Time Original' and 'Media Create Date' are set with exiftool (if present)
 
 Require: tesseract program (see https://github.com/tesseract-ocr/tesseract)
 
@@ -17,6 +19,12 @@ python camtrap_banner_decoder.py.py -d INPUT_DIRECTORY --debug
 python camtrap_banner_decoder.py.py -d INPUT_DIRECTORY --rename
     show extracted information and rename file like YYYY-MM-DD_hhmmss_CAMTRAP-ID_OLD-FILE-NAME
 
+python camtrap_banner_decoder.py.py -d INPUT_DIRECTORY -o OUTPUT_DIRECTORY --rename
+    show extracted information and rename file like YYYY-MM-DD_hhmmss_CAMTRAP-ID_OLD-FILE-NAME in the OUTPUT_DIRECTORY
+
+
+
+exiftool -DateTimeOriginal="2025-01-21 15:34:00" -overwrite_original 06080002.mp4
 
 For moon phase see:
 https://pyorbital.readthedocs.io/en/feature-moon-phase/moon_calculations.html
@@ -44,13 +52,16 @@ import cv2
 import pytesseract
 import re
 from pathlib import Path
+import subprocess
 
-__version__ = "0.0.1"
+__version__ = "0.0.2"
 
 EXTENSIONS = {".avi", ".mp4", ".jpg", ".jpeg"}
 
 
-def banner_text_from_frame(frame, roi_height_fraction: float = 0.15, debug=False, file_path=""):
+def banner_text_from_frame(
+    frame, roi_height_fraction: float = 0.15, debug=False, file_path=""
+):
     """
     extract text from frame banner
     """
@@ -97,7 +108,9 @@ def banner_text_from_frame(frame, roi_height_fraction: float = 0.15, debug=False
     return extracted_text
 
 
-def extract_banner_text_from_video(video_path, frame_interval=30, roi_height_fraction=0.15, debug=False):
+def extract_banner_text_from_video(
+    video_path, frame_interval=30, roi_height_fraction=0.15, debug=False
+):
     """
     Extracts text from the bottom banner of a video.
 
@@ -144,7 +157,9 @@ def extract_banner_text_from_image(image_path, roi_height_fraction=0.15, debug=F
     if frame is None:
         return "Error: Unable to load the image. Check the file path."
 
-    extracted_text = banner_text_from_frame(frame, roi_height_fraction, debug=debug, file_path=image_path)
+    extracted_text = banner_text_from_frame(
+        frame, roi_height_fraction, debug=debug, file_path=image_path
+    )
 
     return extracted_text
 
@@ -247,31 +262,113 @@ def extract_date_time(path_file, debug=False):
     return {"error": ""}
 
 
-def main():
-    parser = argparse.ArgumentParser(description="Extract and rename picture and video files with date/time extracted from banner")
+def get_new_file_path(args, file_path: Path, data: dict) -> Path:
+    """
+    returns new file path
+    """
+    if args.output_directory:
+        dir = Path(args.output_directory)
+    else:
+        dir = Path(file_path).parent
+    new_file_path = (
+        dir / f"{data['date']}_{data['time']}_{data['cam_id']}_{file_path.name}"
+    )
+    return new_file_path
 
-    parser.add_argument("-d", "--directory", action="store", dest="input_directory", default="", help="Directory with media files")
-    parser.add_argument("--cam-id", action="store", dest="cam_id", default="", help="CAM_ID default")
-    parser.add_argument("--rename", action="store_true", dest="rename", default="", help="Rename files")
-    parser.add_argument("--tesseract", action="store", dest="tesseract_cmd", default="", help="Rename files")
 
-    parser.add_argument("--debug", action="store_true", dest="debug", help="Enable debug mode")
-    parser.add_argument("-v", "--version", action="store_true", dest="version", help="Display version")
+def parse_arguments():
+    parser = argparse.ArgumentParser(
+        description="Extract and rename picture and video files with date/time extracted from banner"
+    )
+
+    parser.add_argument(
+        "-d",
+        "--directory",
+        action="store",
+        dest="input_directory",
+        default="",
+        help="Directory with media files",
+    )
+    parser.add_argument(
+        "-o",
+        "--output",
+        action="store",
+        dest="output_directory",
+        default="",
+        help="Output directory",
+    )
+
+    parser.add_argument(
+        "-p",
+        "--pattern",
+        action="store",
+        dest="pattern",
+        default="*",
+        help="Pattern for file selection",
+    )
+    parser.add_argument(
+        "--cam-id", action="store", dest="cam_id", default="", help="CAM_ID default"
+    )
+    parser.add_argument(
+        "--rename", action="store_true", dest="rename", default="", help="Rename files"
+    )
+    parser.add_argument(
+        "--tesseract",
+        action="store",
+        dest="tesseract_cmd",
+        default="tesseract",
+        help="Path for tesseract executable",
+    )
+    parser.add_argument(
+        "--ffmpeg",
+        action="store",
+        dest="ffmpeg_path",
+        default="ffmpeg",
+        help="Path for the ffmpeg executable",
+    )
+
+    parser.add_argument(
+        "--exiftool",
+        action="store",
+        dest="exiftool_path",
+        default="exiftool",
+        help="Path for the exiftool executable",
+    )
+
+    parser.add_argument(
+        "--reencode",
+        action="store_true",
+        dest="reencode",
+        default="",
+        help="Re-encode files with FFmpeg",
+    )
+
+    parser.add_argument(
+        "--debug", action="store_true", dest="debug", help="Enable debug mode"
+    )
+    parser.add_argument(
+        "-v", "--version", action="store_true", dest="version", help="Display version"
+    )
 
     # Parse the command-line arguments
-    args = parser.parse_args()
+    return parser.parse_args()
 
-    if args.tesseract_cmd:
-        print(f"Using {args.tesseract_cmd}")
-        if args.tesseract_cmd == "tesseract" or Path(args.tesseract_cmd).is_file():
-            pytesseract.pytesseract.tesseract_cmd = args.tesseract_cmd
-        else:
-            print(f"The tesseract path {args.tesseract_cmd} was not found")
-            sys.exit()
+
+def main():
+    args = parse_arguments()
 
     if args.version:
         print(f"camtrap_banner_decoder v. {__version__}\n")
         sys.exit()
+
+    if args.tesseract_cmd:
+        if args.tesseract_cmd == "tesseract" or Path(args.tesseract_cmd).is_file():
+            pytesseract.pytesseract.tesseract_cmd = args.tesseract_cmd
+            if args.tesseract_cmd != "tesseract":
+                print(f"Using {args.tesseract_cmd}")
+        else:
+            print(f"The tesseract path {args.tesseract_cmd} was not found")
+            sys.exit()
 
     if Path(args.input_directory).is_dir():
         input_dir = args.input_directory
@@ -282,7 +379,11 @@ def main():
     if args.debug:
         print(f"{input_dir=}")
 
-    files = sorted([file for file in Path(input_dir).glob("*") if file.suffix.lower() in EXTENSIONS])
+    if args.output_directory and not Path(args.output_directory).is_dir():
+        print(f"Output directory {args.output_directory} not found")
+        sys.exit()
+
+    files = sorted(list(Path(input_dir).glob(args.pattern)))
 
     for file_path in files:
         if args.debug:
@@ -304,17 +405,59 @@ def main():
                 else:
                     data["cam_id"] = "CAM-ID"
 
-            new_file_path = Path(file_path).parent / f"{data['date']}_{data['time']}_{data['cam_id']}_{file_path.name}"
+            new_file_path = get_new_file_path(args, file_path, data)
 
             # check if file already renamed
             if str(Path(file_path).name).count("-") == 2:
                 print(f"{Path(file_path).name} already renammed")
             else:
+                if args.reencode:
+                    if file_path.with_suffix(".mp4").is_file():
+                        print(
+                            f"Error re-encoding: {file_path.with_suffix(".mp4")} already exists"
+                        )
+                    else:
+                        command = f'{args.ffmpeg_path} -i "{file_path}" "{file_path.with_suffix(".mp4")}"'
+                        print(
+                            f're-encoding {file_path.name} to {file_path.with_suffix(".mp4").name}'
+                        )
+                        p = subprocess.Popen(
+                            command,
+                            stdout=subprocess.PIPE,
+                            stderr=subprocess.PIPE,
+                            shell=True,
+                        )
+                        out, error = p.communicate()
+
+                        file_path = file_path.with_suffix(".mp4")
+
+                        new_file_path = get_new_file_path(args, file_path, data)
+
                 if args.rename:
-                    file_path.rename(new_file_path)
-                    print(f"{Path(file_path).name} renamed to {Path(new_file_path).name}")
+                    if new_file_path.is_file():
+                        print(f"{Path(new_file_path).name} already exists")
+                    else:
+                        file_path.rename(new_file_path)
+                        print(
+                            f"{Path(file_path).name} renamed to {Path(new_file_path).name}"
+                        )
+                        # save into metadata
+                        time_exiftool = f"{data['time'][0:2]}:{data['time'][2:4]}:{data['time'][4:6]}"
+                        command = f'{args.exiftool_path} -MediaCreateDate="{data["date"]} {time_exiftool}" -DateTimeOriginal="{data["date"]} {time_exiftool}" -overwrite_original {new_file_path}'
+                        p = subprocess.Popen(
+                            command,
+                            stdout=subprocess.PIPE,
+                            stderr=subprocess.PIPE,
+                            shell=True,
+                        )
+                        out, error = p.communicate()
                 else:
-                    print(f"rename {Path(file_path).name} to {Path(new_file_path).name}")
+                    if new_file_path.is_file():
+                        print(f"{Path(new_file_path).name} already exists")
+                    else:
+                        print(
+                            f"rename {Path(file_path).name} to {Path(new_file_path).name}"
+                        )
         print("-" * 30)
 
 
