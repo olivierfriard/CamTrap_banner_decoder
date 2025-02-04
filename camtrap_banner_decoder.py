@@ -59,9 +59,7 @@ __version__ = "0.0.2"
 EXTENSIONS = {".avi", ".mp4", ".jpg", ".jpeg"}
 
 
-def banner_text_from_frame(
-    frame, roi_height_fraction: float = 0.15, debug=False, file_path=""
-):
+def banner_text_from_frame(frame, roi_height_fraction: float = 0.15, debug=False, file_path=""):
     """
     extract text from frame banner
     """
@@ -108,9 +106,7 @@ def banner_text_from_frame(
     return extracted_text
 
 
-def extract_banner_text_from_video(
-    video_path, frame_interval=30, roi_height_fraction=0.15, debug=False
-):
+def extract_banner_text_from_video(video_path, frame_interval=30, roi_height_fraction=0.15, debug=False):
     """
     Extracts text from the bottom banner of a video.
 
@@ -157,9 +153,7 @@ def extract_banner_text_from_image(image_path, roi_height_fraction=0.15, debug=F
     if frame is None:
         return "Error: Unable to load the image. Check the file path."
 
-    extracted_text = banner_text_from_frame(
-        frame, roi_height_fraction, debug=debug, file_path=image_path
-    )
+    extracted_text = banner_text_from_frame(frame, roi_height_fraction, debug=debug, file_path=image_path)
 
     return extracted_text
 
@@ -270,16 +264,16 @@ def get_new_file_path(args, file_path: Path, data: dict) -> Path:
         dir = Path(args.output_directory)
     else:
         dir = Path(file_path).parent
-    new_file_path = (
-        dir / f"{data['date']}_{data['time']}_{data['cam_id']}_{file_path.name}"
-    )
+    new_file_path = dir / f"{data['date']}_{data['time']}_{data['cam_id']}_{file_path.name}"
     return new_file_path
 
 
 def parse_arguments():
-    parser = argparse.ArgumentParser(
-        description="Extract and rename picture and video files with date/time extracted from banner"
-    )
+    """
+    parse command line arguments
+    """
+
+    parser = argparse.ArgumentParser(description="Extract and rename picture and video files with date/time extracted from banner")
 
     parser.add_argument(
         "-d",
@@ -306,12 +300,8 @@ def parse_arguments():
         default="*",
         help="Pattern for file selection",
     )
-    parser.add_argument(
-        "--cam-id", action="store", dest="cam_id", default="", help="CAM_ID default"
-    )
-    parser.add_argument(
-        "--rename", action="store_true", dest="rename", default="", help="Rename files"
-    )
+    parser.add_argument("--cam-id", action="store", dest="cam_id", default="", help="CAM_ID default")
+    parser.add_argument("--rename", action="store_true", dest="rename", default="", help="Rename files")
     parser.add_argument(
         "--tesseract",
         action="store",
@@ -343,12 +333,8 @@ def parse_arguments():
         help="Re-encode files with FFmpeg",
     )
 
-    parser.add_argument(
-        "--debug", action="store_true", dest="debug", help="Enable debug mode"
-    )
-    parser.add_argument(
-        "-v", "--version", action="store_true", dest="version", help="Display version"
-    )
+    parser.add_argument("--debug", action="store_true", dest="debug", help="Enable debug mode")
+    parser.add_argument("-v", "--version", action="store_true", dest="version", help="Display version")
 
     # Parse the command-line arguments
     return parser.parse_args()
@@ -413,14 +399,10 @@ def main():
             else:
                 if args.reencode:
                     if file_path.with_suffix(".mp4").is_file():
-                        print(
-                            f"Error re-encoding: {file_path.with_suffix(".mp4")} already exists"
-                        )
+                        print(f"Error re-encoding: {file_path.with_suffix(".mp4")} already exists")
                     else:
                         command = f'{args.ffmpeg_path} -i "{file_path}" "{file_path.with_suffix(".mp4")}"'
-                        print(
-                            f're-encoding {file_path.name} to {file_path.with_suffix(".mp4").name}'
-                        )
+                        print(f're-encoding {file_path.name} to {file_path.with_suffix(".mp4").name}')
                         p = subprocess.Popen(
                             command,
                             stdout=subprocess.PIPE,
@@ -438,12 +420,21 @@ def main():
                         print(f"{Path(new_file_path).name} already exists")
                     else:
                         file_path.rename(new_file_path)
-                        print(
-                            f"{Path(file_path).name} renamed to {Path(new_file_path).name}"
-                        )
+                        print(f"{Path(file_path).name} renamed to {Path(new_file_path).name}")
                         # save into metadata
                         time_exiftool = f"{data['time'][0:2]}:{data['time'][2:4]}:{data['time'][4:6]}"
-                        command = f'{args.exiftool_path} -MediaCreateDate="{data["date"]} {time_exiftool}" -DateTimeOriginal="{data["date"]} {time_exiftool}" -overwrite_original {new_file_path}'
+                        command = (
+                            f'{args.exiftool_path} '
+                            f'-DateTimeOriginal="{data["date"]} {time_exiftool}" '
+                            f'-CreateDate="{data["date"]} {time_exiftool}" '
+                            f'-ModifyDate="{data["date"]} {time_exiftool}" '
+                            f'-MediaCreateDate="{data["date"]} {time_exiftool}" '
+                            f'-MediaModifyDate="{data["date"]} {time_exiftool}" '
+                            f'-TrackCreateDate="{data["date"]} {time_exiftool}" '
+                            f'-TrackModifyDate="{data["date"]} {time_exiftool}" '
+                            f'-overwrite_original {new_file_path}'
+                        )
+
                         p = subprocess.Popen(
                             command,
                             stdout=subprocess.PIPE,
@@ -455,9 +446,7 @@ def main():
                     if new_file_path.is_file():
                         print(f"{Path(new_file_path).name} already exists")
                     else:
-                        print(
-                            f"rename {Path(file_path).name} to {Path(new_file_path).name}"
-                        )
+                        print(f"rename {Path(file_path).name} to {Path(new_file_path).name}")
         print("-" * 30)
 
 
