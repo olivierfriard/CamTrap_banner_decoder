@@ -385,10 +385,10 @@ def main():
             print(f"{data['temperature_c']=}   {data['temperature_f']=}")
 
         if data["date"] and data["time"]:
-            if data["cam_id"] is None:
-                if args.cam_id:
-                    data["cam_id"] = args.cam_id
-                else:
+            if args.cam_id:
+                data["cam_id"] = args.cam_id
+            else:
+                if data["cam_id"] is None:
                     data["cam_id"] = "CAM-ID"
 
             new_file_path = get_new_file_path(args, file_path, data)
@@ -399,10 +399,10 @@ def main():
             else:
                 if args.reencode:
                     if file_path.with_suffix(".mp4").is_file():
-                        print(f"Error re-encoding: {file_path.with_suffix(".mp4")} already exists")
+                        print(f"Error re-encoding: {file_path.with_suffix('.mp4')} already exists")
                     else:
                         command = f'{args.ffmpeg_path} -i "{file_path}" "{file_path.with_suffix(".mp4")}"'
-                        print(f're-encoding {file_path.name} to {file_path.with_suffix(".mp4").name}')
+                        print(f"re-encoding {file_path.name} to {file_path.with_suffix('.mp4').name}")
                         p = subprocess.Popen(
                             command,
                             stdout=subprocess.PIPE,
@@ -424,7 +424,7 @@ def main():
                         # save into metadata
                         time_exiftool = f"{data['time'][0:2]}:{data['time'][2:4]}:{data['time'][4:6]}"
                         command = (
-                            f'{args.exiftool_path} '
+                            f"{args.exiftool_path} "
                             f'-DateTimeOriginal="{data["date"]} {time_exiftool}" '
                             f'-CreateDate="{data["date"]} {time_exiftool}" '
                             f'-ModifyDate="{data["date"]} {time_exiftool}" '
@@ -432,7 +432,7 @@ def main():
                             f'-MediaModifyDate="{data["date"]} {time_exiftool}" '
                             f'-TrackCreateDate="{data["date"]} {time_exiftool}" '
                             f'-TrackModifyDate="{data["date"]} {time_exiftool}" '
-                            f'-overwrite_original {new_file_path}'
+                            f"-overwrite_original {new_file_path}"
                         )
 
                         p = subprocess.Popen(
