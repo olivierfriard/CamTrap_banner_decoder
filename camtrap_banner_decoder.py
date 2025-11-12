@@ -197,6 +197,8 @@ def extract_date_time(path_file, debug=False):
             date_match = re.search(pattern, text)
             if date_match:
                 raw_date = date_match.group(0)
+                if debug:
+                    print(f"extracted date: {raw_date}")
                 match pattern:
                     case r"\d{2}-\d{2}-\d{4}":
                         raw_date_splitted = raw_date.split("-")
@@ -205,6 +207,8 @@ def extract_date_time(path_file, debug=False):
                         raw_date_splitted = raw_date.split("/")
                         date = f"{raw_date_splitted[2]}-{raw_date_splitted[0]}-{raw_date_splitted[1]}"
                 flag_info = True
+                if debug:
+                     print(f"ISO date: {date}")
 
         if date is None:
             continue
@@ -213,7 +217,11 @@ def extract_date_time(path_file, debug=False):
         time_match = re.search(r"\d{2}:\d{2}:\d{2}", text)
         if time_match:
             raw_time = time_match.group(0)
+            if debug:
+                print(f"extracted time: {raw_time}")
             hhmmss = raw_time.replace(":", "")
+            if debug:
+                print(f"HHMMSS: {hhmmss}")
             flag_info = True
         else:
             continue
@@ -237,7 +245,7 @@ def extract_date_time(path_file, debug=False):
         if flag_info:
             # check for camera ID
             text2 = text
-            if flag_date_found:
+            if date:
                 text2 = text2.replace(raw_date, "")
             if hhmmss:
                 text2 = text2.replace(raw_time, "")
