@@ -47,19 +47,22 @@ https://pyorbital.readthedocs.io/en/feature-moon-phase/moon_calculations.html
 """
 
 import argparse
+import re
+import subprocess
 import sys
+from pathlib import Path
+
 import cv2
 import pytesseract
-import re
-from pathlib import Path
-import subprocess
 
 __version__ = "0.0.2"
 
 EXTENSIONS = {".avi", ".mp4", ".jpg", ".jpeg"}
 
 
-def banner_text_from_frame(frame, roi_height_fraction: float = 0.15, debug=False, file_path=""):
+def banner_text_from_frame(
+    frame, roi_height_fraction: float = 0.15, debug=False, file_path=""
+):
     """
     extract text from frame banner
     """
@@ -106,7 +109,9 @@ def banner_text_from_frame(frame, roi_height_fraction: float = 0.15, debug=False
     return extracted_text
 
 
-def extract_banner_text_from_video(video_path, frame_interval=30, roi_height_fraction=0.15, debug=False):
+def extract_banner_text_from_video(
+    video_path, frame_interval=30, roi_height_fraction=0.15, debug=False
+):
     """
     Extracts text from the bottom banner of a video.
 
@@ -153,7 +158,9 @@ def extract_banner_text_from_image(image_path, roi_height_fraction=0.15, debug=F
     if frame is None:
         return "Error: Unable to load the image. Check the file path."
 
-    extracted_text = banner_text_from_frame(frame, roi_height_fraction, debug=debug, file_path=image_path)
+    extracted_text = banner_text_from_frame(
+        frame, roi_height_fraction, debug=debug, file_path=image_path
+    )
 
     return extracted_text
 
@@ -174,19 +181,32 @@ def extract_date_time(path_file, debug=False):
     if banner_text is None:
         return {"error": ""}
 
+    patterns = [r"\d{2}-\d{2}-\d{4}", r"\d{2}/\d{2}/\d{4}"]
+
     for text in banner_text.split("\n"):
         # The input string
         # text = "@ FOSA_01 73F 23C @ 06-09-2023 13:41:51"
+        # text = "oo) @M-5°C / 23°F. 17/02/2025 00:09:12 = S.F. Attimis\n"
 
         flag_info = False
+        flag_date_found = False
 
-        # Extract date (MM-DD-YYYY)
-        date_match = re.search(r"\d{2}-\d{2}-\d{4}", text)
-        if date_match:
-            raw_date = date_match.group(0)
-            date = f"{raw_date.split('-')[2]}-{raw_date.split('-')[0]}-{raw_date.split('-')[1]}"
-            flag_info = True
-        else:
+        # Try to extract date
+        date = None
+        for pattern in patterns:
+            date_match = re.search(pattern, text)
+            if date_match:
+                raw_date = date_match.group(0)
+                match pattern:
+                    case r"\d{2}-\d{2}-\d{4}":
+                        raw_date_splitted = raw_date.split("-")
+                        date = f"{raw_date_splitted[2]}-{raw_date_splitted[0]}-{raw_date_splitted[1]}"
+                    case r"\d{2}/\d{2}/\d{4}":
+                        raw_date_splitted = raw_date.split("/")
+                        date = f"{raw_date_splitted[2]}-{raw_date_splitted[0]}-{raw_date_splitted[1]}"
+                flag_info = True
+
+        if date is None:
             continue
 
         # Extract time (HH:MM:SS)
@@ -217,7 +237,7 @@ def extract_date_time(path_file, debug=False):
         if flag_info:
             # check for camera ID
             text2 = text
-            if date:
+            if flag_date_found:
                 text2 = text2.replace(raw_date, "")
             if hhmmss:
                 text2 = text2.replace(raw_time, "")
@@ -264,7 +284,9 @@ def get_new_file_path(args, file_path: Path, data: dict) -> Path:
         dir = Path(args.output_directory)
     else:
         dir = Path(file_path).parent
-    new_file_path = dir / f"{data['date']}_{data['time']}_{data['cam_id']}_{file_path.name}"
+    new_file_path = (
+        dir / f"{data['date']}_{data['time']}_{data['cam_id']}_{file_path.name}"
+    )
     return new_file_path
 
 
@@ -273,7 +295,9 @@ def parse_arguments():
     parse command line arguments
     """
 
-    parser = argparse.ArgumentParser(description="Extract and rename picture and video files with date/time extracted from banner")
+    parser = argparse.ArgumentParser(
+        description="Extract and rename picture and video files with date/time extracted from banner"
+    )
 
     parser.add_argument(
         "-d",
@@ -300,8 +324,12 @@ def parse_arguments():
         default="*",
         help="Pattern for file selection",
     )
-    parser.add_argument("--cam-id", action="store", dest="cam_id", default="", help="CAM_ID default")
-    parser.add_argument("--rename", action="store_true", dest="rename", default="", help="Rename files")
+    parser.add_argument(
+        "--cam-id", action="store", dest="cam_id", default="", help="CAM_ID default"
+    )
+    parser.add_argument(
+        "--rename", action="store_true", dest="rename", default="", help="Rename files"
+    )
     parser.add_argument(
         "--tesseract",
         action="store",
@@ -333,8 +361,12 @@ def parse_arguments():
         help="Re-encode files with FFmpeg",
     )
 
-    parser.add_argument("--debug", action="store_true", dest="debug", help="Enable debug mode")
-    parser.add_argument("-v", "--version", action="store_true", dest="version", help="Display version")
+    parser.add_argument(
+        "--debug", action="store_true", dest="debug", help="Enable debug mode"
+    )
+    parser.add_argument(
+        "-v", "--version", action="store_true", dest="version", help="Display version"
+    )
 
     # Parse the command-line arguments
     return parser.parse_args()
@@ -399,10 +431,14 @@ def main():
             else:
                 if args.reencode:
                     if file_path.with_suffix(".mp4").is_file():
-                        print(f"Error re-encoding: {file_path.with_suffix('.mp4')} already exists")
+                        print(
+                            f"Error re-encoding: {file_path.with_suffix('.mp4')} already exists"
+                        )
                     else:
                         command = f'{args.ffmpeg_path} -i "{file_path}" "{file_path.with_suffix(".mp4")}"'
-                        print(f"re-encoding {file_path.name} to {file_path.with_suffix('.mp4').name}")
+                        print(
+                            f"re-encoding {file_path.name} to {file_path.with_suffix('.mp4').name}"
+                        )
                         p = subprocess.Popen(
                             command,
                             stdout=subprocess.PIPE,
@@ -420,7 +456,9 @@ def main():
                         print(f"{Path(new_file_path).name} already exists")
                     else:
                         file_path.rename(new_file_path)
-                        print(f"{Path(file_path).name} renamed to {Path(new_file_path).name}")
+                        print(
+                            f"{Path(file_path).name} renamed to {Path(new_file_path).name}"
+                        )
                         # save into metadata
                         time_exiftool = f"{data['time'][0:2]}:{data['time'][2:4]}:{data['time'][4:6]}"
                         command = (
@@ -446,7 +484,9 @@ def main():
                     if new_file_path.is_file():
                         print(f"{Path(new_file_path).name} already exists")
                     else:
-                        print(f"rename {Path(file_path).name} to {Path(new_file_path).name}")
+                        print(
+                            f"rename {Path(file_path).name} to {Path(new_file_path).name}"
+                        )
         print("-" * 30)
 
 
