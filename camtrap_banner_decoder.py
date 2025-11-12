@@ -208,7 +208,7 @@ def extract_date_time(path_file, debug=False):
                         date = f"{raw_date_splitted[2]}-{raw_date_splitted[0]}-{raw_date_splitted[1]}"
                 flag_info = True
                 if debug:
-                     print(f"ISO date: {date}")
+                    print(f"ISO date: {date}")
 
         if date is None:
             continue
@@ -293,7 +293,8 @@ def get_new_file_path(args, file_path: Path, data: dict) -> Path:
     else:
         dir = Path(file_path).parent
     new_file_path = (
-        dir / f"{data['date']}_{data['time']}_{data['cam_id']}_{file_path.name}"
+        dir
+        / f"{data['date']}_{data['time']}_{data['cam_id']}{'_' if data['cam_id'] else ''}{file_path.name}"
     )
     return new_file_path
 
@@ -333,7 +334,7 @@ def parse_arguments():
         help="Pattern for file selection",
     )
     parser.add_argument(
-        "--cam-id", action="store", dest="cam_id", default="", help="CAM_ID default"
+        "--cam-id", action="store", dest="cam_id", default="NO", help="CAM_ID default"
     )
     parser.add_argument(
         "--rename", action="store_true", dest="rename", default="", help="Rename files"
@@ -383,6 +384,8 @@ def parse_arguments():
 def main():
     args = parse_arguments()
 
+    print(f"{args.cam_id=}")
+
     if args.version:
         print(f"camtrap_banner_decoder v. {__version__}\n")
         sys.exit()
@@ -425,7 +428,9 @@ def main():
             print(f"{data['temperature_c']=}   {data['temperature_f']=}")
 
         if data["date"] and data["time"]:
-            if args.cam_id:
+            if args.cam_id == "NO":  # , "EXTRACT"):
+                data["cam_id"] = ""
+            elif args.cam_id != "EXTRACT":
                 data["cam_id"] = args.cam_id
             else:
                 if data["cam_id"] is None:
