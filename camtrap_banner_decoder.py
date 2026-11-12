@@ -3,13 +3,13 @@ camtrap_banner_decoder
 Copyright 2024-2026 Olivier Friard
 
 
-Rename file using date and time extracted from the camera-trap bottom video/picture banner
-Video files can be re-encoded with ffmpeg (if present)
-Metadata 'Date/Time Original' and 'Media Create Date' are set with exiftool (if present)
+Rename files using the date and time extracted from the bottom banner of camera-trap images and videos.
+Video files can be re-encoded with FFmpeg (if available).
+The 'Date/Time Original' and 'Media Create Date' metadata fields are set with ExifTool (if available).
 
-Require: tesseract program (see https://github.com/tesseract-ocr/tesseract)
+Requires: Tesseract (see https://github.com/tesseract-ocr/tesseract)
 
-For moon phase see:
+For moon phase calculations, see:
 https://pyorbital.readthedocs.io/en/feature-moon-phase/moon_calculations.html
 
 
@@ -56,7 +56,7 @@ def banner_text_from_frame(
     file_path="",
 ):
     """
-    extract text from frame banner
+    Extract text from the banner of a frame.
     """
 
     extracted_text = None
@@ -65,7 +65,7 @@ def banner_text_from_frame(
 
     if args.debug:
         print(
-            f"image original dimention: {frame_height}x{frame_width}", file=sys.stderr
+            f"Original image dimensions: {frame_height}x{frame_width}", file=sys.stderr
         )
 
     if frame_width > 2592:
@@ -77,7 +77,7 @@ def banner_text_from_frame(
 
         if args.debug:
             print(
-                f"image resized dimention: {frame_height}x{frame_width}",
+                f"Resized image dimensions: {frame_height}x{frame_width}",
                 file=sys.stderr,
             )
 
@@ -112,17 +112,16 @@ def extract_banner_text_from_video(
     video_path, args, frame_interval=30, roi_height_fraction=0.15
 ):
     """
-    Extracts text from the bottom banner of a video.
+    Extract text from the bottom banner of a video.
 
     Args:
         video_path (str): Path to the video file.
-        args: argmuents
-        output_frame_path (str): Path to save a sample frame for inspection.
+        args: Parsed command-line arguments.
         frame_interval (int): Interval at which frames are sampled.
         roi_height_fraction (float): Fraction of the frame height that contains the banner.
 
     Returns:
-        str: Extracted date and time from the video banner.
+        str: Text extracted from the video banner, or None if no frame is read.
     """
 
     extracted_text = None
@@ -154,7 +153,7 @@ def extract_banner_text_from_video(
 
 def extract_banner_text_from_image(image_path, args, roi_height_fraction=0.15):
     """
-    extract text contained in the bottom banner of an image
+    Extract text from the bottom banner of an image.
     """
     frame = cv2.imread(image_path)
     if frame is None:
@@ -195,7 +194,7 @@ def extract_date_hhmmss(text, date_orders=("MDY", "DMY", "YMD")):
         "MDY": "%m/%d/%Y",
     }
 
-    # Accepter également "M/D/Y", "D-M-Y", etc.
+    # Also accept "M/D/Y", "D-M-Y", etc.
     if isinstance(date_orders, str):
         date_orders = [date_orders]
 
@@ -204,7 +203,7 @@ def extract_date_hhmmss(text, date_orders=("MDY", "DMY", "YMD")):
     )
 
     if not orders or any(order not in formats for order in orders):
-        raise ValueError("Ordres autorisés : YMD, DMY, MDY")
+        raise ValueError("Allowed date orders: YMD, DMY, MDY")
 
     warnings = []
     selected_dates = set()
@@ -222,10 +221,12 @@ def extract_date_hhmmss(text, date_orders=("MDY", "DMY", "YMD")):
                 continue
 
         if not valid:
-            warnings.append(f"Date invalide pour les ordres fournis : {match.group()}")
+            warnings.append(
+                f"Invalid date for the specified date orders: {match.group()}"
+            )
             continue
 
-        # La priorité dépend de l'ordre de la liste.
+        # Priority follows the order of the list.
         selected_order, selected_date = valid[0]
         selected_dates.add(selected_date)
 
@@ -234,14 +235,14 @@ def extract_date_hhmmss(text, date_orders=("MDY", "DMY", "YMD")):
 
         if len(alternatives) > 1:
             warnings.append(
-                f"Date ambiguë : {match.group()} → {selected_date} "
-                f"(priorité {selected_order})"
+                f"Ambiguous date: {match.group()} → {selected_date} "
+                f"(priority {selected_order})"
             )
 
     if len(selected_dates) > 1:
-        warnings.append("Plusieurs dates distinctes : vérifier OCR")
+        warnings.append("Multiple distinct dates: check the OCR output")
 
-    # Masquer les dates avant de chercher les heures.
+    # Mask dates before searching for times.
     spans = [m.span() for m in re.finditer(DATE_TOKEN, text)]
     masked = list(text)
     for start, end in spans:
@@ -260,7 +261,7 @@ def extract_date_hhmmss(text, date_orders=("MDY", "DMY", "YMD")):
             if any(match.start() < end and match.end() > start for start, end in used):
                 continue
 
-            # HH:MMSS accepté uniquement après une date proche.
+            # Accept HH:MMSS only when it follows a nearby date.
             if mode == "compact" and not any(
                 0 <= match.start() - end <= 4 for _, end in spans
             ):
@@ -285,12 +286,12 @@ def extract_date_hhmmss(text, date_orders=("MDY", "DMY", "YMD")):
             second = 0 if mode == "minute" else int(match["s"])
 
             if mode != "minute" and len(match["s"]) != 2:
-                warnings.append(f"Heure invalide : {match.group()}")
+                warnings.append(f"Invalid time: {match.group()}")
                 continue
 
             if mode == "minute":
                 if not 1 <= hour <= 12:
-                    warnings.append(f"Heure AM/PM invalide : {match.group()}")
+                    warnings.append(f"Invalid AM/PM time: {match.group()}")
                     continue
 
                 hour = hour % 12 + (12 if match["ampm"].upper() == "PM" else 0)
@@ -298,7 +299,7 @@ def extract_date_hhmmss(text, date_orders=("MDY", "DMY", "YMD")):
             try:
                 value = time(hour, minute, second).strftime("%H%M%S")
             except ValueError:
-                warnings.append(f"Heure invalide : {match.group()}")
+                warnings.append(f"Invalid time: {match.group()}")
                 continue
 
             precision = "minute" if mode == "minute" else "second"
@@ -306,14 +307,14 @@ def extract_date_hhmmss(text, date_orders=("MDY", "DMY", "YMD")):
                 times[value] = precision
 
             if mode == "minute":
-                warnings.append("Secondes absentes : 00 utilisé pour HHMMSS")
+                warnings.append("Seconds missing: using 00 for HHMMSS")
                 if not raw_hour.isdigit() or ":" not in match.group():
-                    warnings.append(f"Correction OCR heure : {match.group()}")
+                    warnings.append(f"OCR time correction: {match.group()}")
             elif mode == "compact" or "." in match.group() or "°" in match.group():
-                warnings.append(f"Séparateur horaire OCR normalisé : {match.group()}")
+                warnings.append(f"OCR time separator normalized: {match.group()}")
 
     if len(times) > 1:
-        warnings.append("Plusieurs heures : vérifier OCR")
+        warnings.append("Multiple times: check the OCR output")
 
     hhmmss = next(iter(times)) if len(times) == 1 else ""
 
@@ -337,7 +338,7 @@ def extract_temperatures(text):
         rf"(?P<unit>[CF])\b"
     )
 
-    # Nombre immédiatement avant une température F, dont l'unité C manque.
+    # Number immediately before a Fahrenheit temperature, with its Celsius unit missing.
     BEFORE_F = re.compile(
         rf"(?<![\w.,:+-])"
         rf"(?P<value>{NUMBER})\s*[°%]?\s*(?:/\s*)?$"
@@ -358,30 +359,30 @@ def extract_temperatures(text):
         )
     )
 
-    # Cas observés : @M-4°C et @€M5°C.
+    # Observed cases: @M-4°C and @€M5°C.
     text = re.sub(r"(?<=[@€])M(?=[+-]?\d)", "", text)
 
-    # Correction limitée au couple OC 32°F.
+    # Limit this correction to the OC 32°F pair.
     text, corrections = re.subn(
         r"(?<!\w)O(?=\s*C\b\s*/?\s*32\s*°?\s*F\b)",
         "0",
         text,
     )
 
-    warnings = ["Correction OCR OC → 0C"] if corrections else []
+    warnings = ["OCR correction: OC → 0C"] if corrections else []
     hits = {"C": [], "F": []}
 
     for match in TEMPERATURE.finditer(text):
         value = as_number(match["value"])
         unit = match["unit"]
 
-        # Plages de filtrage configurables.
+        # Filter values by temperature unit.
         valid = -100 <= value <= 100 if unit == "C" else -148 <= value <= 212
 
         if valid:
             hits[unit].append((value, match.start()))
         else:
-            warnings.append(f"Valeur hors plage : {match.group().strip()}")
+            warnings.append(f"Value out of range: {match.group().strip()}")
 
     result = {"c": None, "f": None, "warnings": warnings}
 
@@ -390,9 +391,9 @@ def extract_temperatures(text):
         if len(values) == 1:
             result[unit.lower()] = values.pop()
         elif values:
-            warnings.append(f"Plusieurs valeurs pour {unit}")
+            warnings.append(f"Multiple values for {unit}")
 
-    # Récupérer une valeur dont l'unité C a disparu.
+    # Recover a value whose Celsius unit is missing.
     if not hits["C"] and result["f"] is not None:
         guesses = set()
 
@@ -408,18 +409,18 @@ def extract_temperatures(text):
 
         if len(guesses) == 1:
             result["c"] = guesses.pop()
-            warnings.append("Unité C déduite du couple C/F")
+            warnings.append("Celsius unit inferred from the C/F pair")
 
     if result["c"] is not None and result["f"] is not None:
         if abs(result["f"] - (1.8 * result["c"] + 32)) > 2:
-            warnings.append("Couple C/F incohérent")
+            warnings.append("Inconsistent C/F pair")
 
     return result
 
 
 def extract_date_time(path_file, args):
     """
-    extract info from the picture/video banner
+    Extract information from the image or video banner.
     """
 
     banner_text = None
@@ -442,20 +443,21 @@ def extract_date_time(path_file, args):
     if banner_text is not None:
         for text in banner_text.split("\n"):
             if args.debug:
-                print(f"extracted text: {text}")
+                print(f"Extracted text: {text}")
             all_txt += text
             # The input string
             # text = "@ FOSA_01 73F 23C @ 06-09-2023 13:41:51"
             # text = "oo) @M-5°C / 23°F. 17/02/2025 00:09:12 = S.F. Attimis\n"
 
-            # Try to extract date
+            # Try to extract the date
+            """
             if not date:
                 for pattern in patterns:
                     date_match = re.search(pattern, text)
                     if date_match:
                         raw_date = date_match.group(0)
                         if args.debug:
-                            print(f"extracted date: {raw_date}")
+                            print(f"Extracted date: {raw_date}")
                         match pattern:
                             case r"\d{2}-\d{2}-\d{4}":
                                 raw_date_splitted = raw_date.split("-")
@@ -474,8 +476,19 @@ def extract_date_time(path_file, args):
                         date = f"{year}-{month}-{day}"
                         if args.debug:
                             print(f"ISO date: {date}")
+            """
+            if not date or not hhmmss:
+                dt = extract_date_hhmmss(text)
+                if dt["date"]:
+                    date = dt["date"]
+                if dt["hhmmss"]:
+                    hhmmss = dt["hhmmss"]
 
-            print(extract_date_hhmmss(text))
+            """
+            if dt["date"] or dt["hhmmss"]:
+                dt["file_name"] = str(Path(path_file).name)
+                print(dt)
+            """
 
             # Extract time (HH:MM:SS)
             if not hhmmss:
@@ -483,12 +496,13 @@ def extract_date_time(path_file, args):
                 if time_match:
                     raw_time = time_match.group(0)
                     if args.debug:
-                        print(f"extracted time: {raw_time}")
+                        print(f"Extracted time: {raw_time}")
                     hhmmss = raw_time.replace(":", "")
                     if args.debug:
                         print(f"HHMMSS: {hhmmss}")
 
             # Extract temperature in Fahrenheit (e.g., 73F)
+            """
             if not temperature_f:
                 temp_f_match = re.search(r" \d+F ", text)
                 if temp_f_match:
@@ -501,12 +515,22 @@ def extract_date_time(path_file, args):
                 if temp_c_match:
                     raw_temperature_c = temp_c_match.group(0)
                     temperature_c = raw_temperature_c.strip()
+            """
 
             temp = extract_temperatures(text)
-            if temp["c"] or temp["f"]:
-                print(extract_temperatures(text))
+            if temp["c"]:
+                temperature_c = temp["c"]
+            if temp["f"]:
+                temperature_f = temp["f"]
 
-            # check for camera ID
+            """
+            if temp["c"] or temp["f"]:
+                temp["file_name"] = str(Path(path_file).name)
+                print(extract_temperatures(text))
+            """
+
+            # Check for the camera ID
+            """
             text2 = text
             if date:
                 text2 = text2.replace(raw_date, "")
@@ -533,6 +557,7 @@ def extract_date_time(path_file, args):
 
                 if args.debug:
                     print(f"{cam_id=}", file=sys.stderr)
+            """
 
     return {
         "file_path": path_file,
@@ -548,7 +573,7 @@ def extract_date_time(path_file, args):
 
 def get_new_file_path(args, file_path: Path, data: dict) -> Path:
     """
-    returns new file path
+    Return the new file path.
     """
     if args.output_directory:
         dir = Path(args.output_directory)
@@ -566,11 +591,11 @@ def get_new_file_path(args, file_path: Path, data: dict) -> Path:
 
 def parse_arguments():
     """
-    parse command line arguments
+    Parse command-line arguments.
     """
 
     parser = argparse.ArgumentParser(
-        description="Extract and optionally rename picture and video files with date/time extracted from banner"
+        description="Extract the date and time from image and video banners and optionally rename the files"
     )
 
     parser.add_argument(
@@ -579,7 +604,7 @@ def parse_arguments():
         action="store",
         dest="input_directory",
         default="",
-        help="Directory with media files",
+        help="Directory containing media files",
     )
     parser.add_argument(
         "-o",
@@ -596,10 +621,14 @@ def parse_arguments():
         action="store",
         dest="pattern",
         default="*",
-        help="Pattern for file selection",
+        help="File selection pattern",
     )
     parser.add_argument(
-        "--cam-id", action="store", dest="cam_id", default="NO", help="CAM_ID default"
+        "--cam-id",
+        action="store",
+        dest="cam_id",
+        default="NO",
+        help="Camera ID: NO to omit it, EXTRACT to read it from the banner, or a custom value",
     )
     parser.add_argument(
         "--rename", action="store_true", dest="rename", default="", help="Rename files"
@@ -609,14 +638,14 @@ def parse_arguments():
         action="store",
         dest="tesseract_cmd",
         default="tesseract",
-        help="Path for tesseract executable",
+        help="Path to the Tesseract executable",
     )
     parser.add_argument(
         "--ffmpeg",
         action="store",
         dest="ffmpeg_path",
         default="ffmpeg",
-        help="Path for the ffmpeg executable",
+        help="Path to the FFmpeg executable",
     )
 
     parser.add_argument(
@@ -624,7 +653,7 @@ def parse_arguments():
         action="store",
         dest="exiftool_path",
         default="exiftool",
-        help="Path for the exiftool executable",
+        help="Path to the ExifTool executable",
     )
 
     parser.add_argument(
@@ -639,7 +668,11 @@ def parse_arguments():
         "--debug", action="store_true", dest="debug", help="Enable debug mode"
     )
     parser.add_argument(
-        "-v", "--version", action="store_true", dest="version", help="Display version"
+        "-v",
+        "--version",
+        action="store_true",
+        dest="version",
+        help="Display the version",
     )
 
     # Parse the command-line arguments
@@ -660,7 +693,7 @@ def main():
                 print(f"Using {args.tesseract_cmd}", file=sys.stderr)
         else:
             print(
-                f"The tesseract path {args.tesseract_cmd} was not found",
+                f"Tesseract executable not found: {args.tesseract_cmd}",
                 file=sys.stderr,
             )
             sys.exit()
@@ -685,7 +718,7 @@ def main():
 
         data = extract_date_time(str(file_path), args)
 
-        print(data)  # remove before release
+        print(data)  # Remove before release
 
         if args.debug:
             print(f"{data['temperature_c']=}   {data['temperature_f']=}")
@@ -718,7 +751,7 @@ def main():
                     else:
                         command = f'{args.ffmpeg_path} -i "{file_path}" "{new_file_path.with_suffix(next_ext)}"'
                         print(
-                            f"re-encoding {file_path.name} to {new_file_path.with_suffix(next_ext)}"
+                            f"Re-encoding {file_path.name} to {new_file_path.with_suffix(next_ext)}"
                         )
                         p = subprocess.Popen(
                             command,
@@ -730,11 +763,11 @@ def main():
 
                         new_file_path = new_file_path.with_suffix(next_ext)
                 else:
-                    # copy file
+                    # Copy the file
                     shutil.copy(file_path, new_file_path)
                     print(f"{Path(file_path).name} copied to {Path(new_file_path)}")
 
-                # save into metadata
+                # Save the date and time in the metadata
                 time_exiftool = (
                     f"{data['time'][0:2]}:{data['time'][2:4]}:{data['time'][4:6]}"
                 )
@@ -763,7 +796,7 @@ def main():
                 print(f"{Path(new_file_path).name} already exists")
             else:
                 print(
-                    f"rename {Path(file_path).name} to {Path(new_file_path).name}"
+                    f"Rename {Path(file_path).name} to {Path(new_file_path).name}"
                 )
             """
 
