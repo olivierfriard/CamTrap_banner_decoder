@@ -1,6 +1,6 @@
 """
 camtrap_banner_decoder
-Copyright 2024-2025 Olivier Friard
+Copyright 2024-2026 Olivier Friard
 
 
 Rename file using date and time extracted from the camera-trap bottom video/picture banner
@@ -8,23 +8,6 @@ Video files can be re-encoded with ffmpeg (if present)
 Metadata 'Date/Time Original' and 'Media Create Date' are set with exiftool (if present)
 
 Require: tesseract program (see https://github.com/tesseract-ocr/tesseract)
-
-Usage:
-python camtrap_banner_decoder.py.py -d INPUT_DIRECTORY
-    show extracted information
-
-python camtrap_banner_decoder.py.py -d INPUT_DIRECTORY --debug
-    show more information
-
-python camtrap_banner_decoder.py.py -d INPUT_DIRECTORY --rename
-    show extracted information and rename file like YYYY-MM-DD_hhmmss_CAMTRAP-ID_OLD-FILE-NAME
-
-python camtrap_banner_decoder.py.py -d INPUT_DIRECTORY -o OUTPUT_DIRECTORY --rename
-    show extracted information and rename file like YYYY-MM-DD_hhmmss_CAMTRAP-ID_OLD-FILE-NAME in the OUTPUT_DIRECTORY
-
-
-
-exiftool -DateTimeOriginal="2025-01-21 15:34:00" -overwrite_original 06080002.mp4
 
 For moon phase see:
 https://pyorbital.readthedocs.io/en/feature-moon-phase/moon_calculations.html
@@ -51,12 +34,13 @@ import re
 import shutil
 import subprocess
 import sys
+from datetime import datetime, time
 from pathlib import Path
 
 import cv2
 import pytesseract
 
-__version__ = "0.0.2"
+__version__ = "0.0.3"
 
 
 VIDEO_EXTENSIONS = (".avi", ".mp4", ".mov")
@@ -65,7 +49,11 @@ EXTENSIONS = set(VIDEO_EXTENSIONS + IMAGES_EXTENSIONS)
 
 
 def banner_text_from_frame(
-    frame, args, roi_height_fraction: float = 0.15, file_path=""
+    frame,
+    args,
+    roi_height_fraction: float = 0.15,
+    position: str = "bottom",
+    file_path="",
 ):
     """
     extract text from frame banner
@@ -95,10 +83,12 @@ def banner_text_from_frame(
 
     # Define the region of interest (ROI)
     roi_height = int(frame_height * roi_height_fraction)
-    roi = frame[frame_height - roi_height : frame_height, 0:frame_width]
+    if position == "bottom":
+        roi = frame[frame_height - roi_height : frame_height, 0:frame_width]
+    if position == "up":
+        roi = frame[0:roi_height:frame_height, 0:frame_width]
 
     # Save the first sampled frame for inspection
-
     if file_path and args.debug:
         cv2.imwrite(Path("/tmp") / Path(file_path).with_suffix(".webp").name, roi)
 
@@ -149,7 +139,9 @@ def extract_banner_text_from_video(
 
         # Process every `frame_interval` frame
         if frame_count % frame_interval == 0:
-            extracted_text = banner_text_from_frame(frame, roi_height_fraction, args)
+            extracted_text = banner_text_from_frame(
+                frame, args, roi_height_fraction, position="bottom"
+            )
             break
 
         frame_count += 1
@@ -169,10 +161,260 @@ def extract_banner_text_from_image(image_path, args, roi_height_fraction=0.15):
         return "Error: Unable to load the image. Check the file path."
 
     extracted_text = banner_text_from_frame(
-        frame, args, roi_height_fraction, file_path=image_path
+        frame, args, roi_height_fraction, position="bottom", file_path=image_path
     )
 
     return extracted_text
+
+
+def extract_date_hhmmss(text, date_orders=("MDY", "DMY", "YMD")):
+
+    DATE_TOKEN = (
+        r"(?:\d{4}([/-])\d{2}\1\d{2}"
+        r"|\d{2}([/-])\d{2}\2\d{4})"
+    )
+
+    DATE = re.compile(r"(?<!\d)" + DATE_TOKEN + r"(?=\d{2}:|[^\d]|$)")
+
+    HMS = re.compile(
+        r"(?<!\d)(?P<h>\d{2})\s*:\s*(?P<m>\d{2})"
+        r"\s*[:.°]\s*(?P<s>\d{2,})(?!\d)"
+    )
+
+    COMPACT = re.compile(r"(?<!\d)(?P<h>\d{2}):(?P<m>\d{2})(?P<s>\d{2})(?!\d)")
+
+    AMPM = re.compile(
+        r"(?<![A-Za-z0-9:])"
+        r"(?P<h>[0-9OITl]{1,2})\s*:?\s*(?P<m>\d{2})"
+        r"\s*(?P<ampm>[APap][Mm])(?![A-Z0-9])"
+    )
+
+    formats = {
+        "YMD": "%Y/%m/%d",
+        "DMY": "%d/%m/%Y",
+        "MDY": "%m/%d/%Y",
+    }
+
+    # Accepter également "M/D/Y", "D-M-Y", etc.
+    if isinstance(date_orders, str):
+        date_orders = [date_orders]
+
+    orders = list(
+        dict.fromkeys(re.sub(r"[/\-\s]", "", order.upper()) for order in date_orders)
+    )
+
+    if not orders or any(order not in formats for order in orders):
+        raise ValueError("Ordres autorisés : YMD, DMY, MDY")
+
+    warnings = []
+    selected_dates = set()
+    date_candidates = set()
+
+    for match in DATE.finditer(text):
+        raw = match.group().replace("-", "/")
+        valid = []
+
+        for order in orders:
+            try:
+                value = datetime.strptime(raw, formats[order]).date().isoformat()
+                valid.append((order, value))
+            except ValueError:
+                continue
+
+        if not valid:
+            warnings.append(f"Date invalide pour les ordres fournis : {match.group()}")
+            continue
+
+        # La priorité dépend de l'ordre de la liste.
+        selected_order, selected_date = valid[0]
+        selected_dates.add(selected_date)
+
+        alternatives = {value for _, value in valid}
+        date_candidates.update(alternatives)
+
+        if len(alternatives) > 1:
+            warnings.append(
+                f"Date ambiguë : {match.group()} → {selected_date} "
+                f"(priorité {selected_order})"
+            )
+
+    if len(selected_dates) > 1:
+        warnings.append("Plusieurs dates distinctes : vérifier OCR")
+
+    # Masquer les dates avant de chercher les heures.
+    spans = [m.span() for m in re.finditer(DATE_TOKEN, text)]
+    masked = list(text)
+    for start, end in spans:
+        masked[start:end] = " " * (end - start)
+    masked = "".join(masked)
+
+    times = {}
+    used = []
+
+    for mode, pattern in [
+        ("second", HMS),
+        ("compact", COMPACT),
+        ("minute", AMPM),
+    ]:
+        for match in pattern.finditer(masked):
+            if any(match.start() < end and match.end() > start for start, end in used):
+                continue
+
+            # HH:MMSS accepté uniquement après une date proche.
+            if mode == "compact" and not any(
+                0 <= match.start() - end <= 4 for _, end in spans
+            ):
+                continue
+
+            used.append(match.span())
+
+            raw_hour = match["h"]
+            hour = int(
+                raw_hour.translate(
+                    str.maketrans(
+                        {
+                            "O": "0",
+                            "I": "1",
+                            "T": "1",
+                            "l": "1",
+                        }
+                    )
+                )
+            )
+            minute = int(match["m"])
+            second = 0 if mode == "minute" else int(match["s"])
+
+            if mode != "minute" and len(match["s"]) != 2:
+                warnings.append(f"Heure invalide : {match.group()}")
+                continue
+
+            if mode == "minute":
+                if not 1 <= hour <= 12:
+                    warnings.append(f"Heure AM/PM invalide : {match.group()}")
+                    continue
+
+                hour = hour % 12 + (12 if match["ampm"].upper() == "PM" else 0)
+
+            try:
+                value = time(hour, minute, second).strftime("%H%M%S")
+            except ValueError:
+                warnings.append(f"Heure invalide : {match.group()}")
+                continue
+
+            precision = "minute" if mode == "minute" else "second"
+            if value not in times or precision == "second":
+                times[value] = precision
+
+            if mode == "minute":
+                warnings.append("Secondes absentes : 00 utilisé pour HHMMSS")
+                if not raw_hour.isdigit() or ":" not in match.group():
+                    warnings.append(f"Correction OCR heure : {match.group()}")
+            elif mode == "compact" or "." in match.group() or "°" in match.group():
+                warnings.append(f"Séparateur horaire OCR normalisé : {match.group()}")
+
+    if len(times) > 1:
+        warnings.append("Plusieurs heures : vérifier OCR")
+
+    hhmmss = next(iter(times)) if len(times) == 1 else ""
+
+    return {
+        "date": (next(iter(selected_dates)) if len(selected_dates) == 1 else ""),
+        "date_candidates": sorted(date_candidates),
+        "hhmmss": hhmmss,
+        "time_precision": times[hhmmss] if hhmmss else None,
+        "warnings": warnings,
+    }
+
+
+def extract_temperatures(text):
+
+    NUMBER = r"[+-]?\s*(?:0|[1-9]\d{0,2})(?:[.,]\d+)?"
+
+    TEMPERATURE = re.compile(
+        rf"(?<![\w.,:+-])"
+        rf"(?P<value>{NUMBER})\s*"
+        rf"(?:\.?\s*°\s*%?\s*)?"
+        rf"(?P<unit>[CF])\b"
+    )
+
+    # Nombre immédiatement avant une température F, dont l'unité C manque.
+    BEFORE_F = re.compile(
+        rf"(?<![\w.,:+-])"
+        rf"(?P<value>{NUMBER})\s*[°%]?\s*(?:/\s*)?$"
+    )
+
+    def as_number(text):
+        return float(re.sub(r"\s+", "", text).replace(",", "."))
+
+    text = text.translate(
+        str.maketrans(
+            {
+                "−": "-",
+                "–": "-",
+                "º": "°",
+                "℃": "°C",
+                "℉": "°F",
+            }
+        )
+    )
+
+    # Cas observés : @M-4°C et @€M5°C.
+    text = re.sub(r"(?<=[@€])M(?=[+-]?\d)", "", text)
+
+    # Correction limitée au couple OC 32°F.
+    text, corrections = re.subn(
+        r"(?<!\w)O(?=\s*C\b\s*/?\s*32\s*°?\s*F\b)",
+        "0",
+        text,
+    )
+
+    warnings = ["Correction OCR OC → 0C"] if corrections else []
+    hits = {"C": [], "F": []}
+
+    for match in TEMPERATURE.finditer(text):
+        value = as_number(match["value"])
+        unit = match["unit"]
+
+        # Plages de filtrage configurables.
+        valid = -100 <= value <= 100 if unit == "C" else -148 <= value <= 212
+
+        if valid:
+            hits[unit].append((value, match.start()))
+        else:
+            warnings.append(f"Valeur hors plage : {match.group().strip()}")
+
+    result = {"c": None, "f": None, "warnings": warnings}
+
+    for unit, candidates in hits.items():
+        values = {value for value, _ in candidates}
+        if len(values) == 1:
+            result[unit.lower()] = values.pop()
+        elif values:
+            warnings.append(f"Plusieurs valeurs pour {unit}")
+
+    # Récupérer une valeur dont l'unité C a disparu.
+    if not hits["C"] and result["f"] is not None:
+        guesses = set()
+
+        for fahrenheit, start in hits["F"]:
+            match = BEFORE_F.search(text[:start])
+            if match:
+                celsius = as_number(match["value"])
+                if (
+                    -100 <= celsius <= 100
+                    and abs(fahrenheit - (1.8 * celsius + 32)) <= 2
+                ):
+                    guesses.add(celsius)
+
+        if len(guesses) == 1:
+            result["c"] = guesses.pop()
+            warnings.append("Unité C déduite du couple C/F")
+
+    if result["c"] is not None and result["f"] is not None:
+        if abs(result["f"] - (1.8 * result["c"] + 32)) > 2:
+            warnings.append("Couple C/F incohérent")
+
+    return result
 
 
 def extract_date_time(path_file, args):
@@ -188,8 +430,6 @@ def extract_date_time(path_file, args):
     if Path(path_file).suffix.lower() in IMAGES_EXTENSIONS:
         banner_text = extract_banner_text_from_image(path_file, args)
 
-
-
     patterns = [r"\d{2}-\d{2}-\d{4}", r"\d{2}/\d{2}/\d{4}"]
 
     temperature_f = ""
@@ -197,103 +437,107 @@ def extract_date_time(path_file, args):
     temperature_c = ""
     cam_id = ""
     hhmmss = ""
+    all_txt = ""
 
     if banner_text is not None:
         for text in banner_text.split("\n"):
-        # The input string
-        # text = "@ FOSA_01 73F 23C @ 06-09-2023 13:41:51"
-        # text = "oo) @M-5°C / 23°F. 17/02/2025 00:09:12 = S.F. Attimis\n"
+            if args.debug:
+                print(f"extracted text: {text}")
+            all_txt += text
+            # The input string
+            # text = "@ FOSA_01 73F 23C @ 06-09-2023 13:41:51"
+            # text = "oo) @M-5°C / 23°F. 17/02/2025 00:09:12 = S.F. Attimis\n"
 
-        flag_info = False
+            # Try to extract date
+            if not date:
+                for pattern in patterns:
+                    date_match = re.search(pattern, text)
+                    if date_match:
+                        raw_date = date_match.group(0)
+                        if args.debug:
+                            print(f"extracted date: {raw_date}")
+                        match pattern:
+                            case r"\d{2}-\d{2}-\d{4}":
+                                raw_date_splitted = raw_date.split("-")
+                                year = raw_date_splitted[2]
+                                month = raw_date_splitted[0]
+                                day = raw_date_splitted[1]
+                                # date = f"{raw_date_splitted[2]}-{raw_date_splitted[0]}-{raw_date_splitted[1]}"
+                            case r"\d{2}/\d{2}/\d{4}":
+                                raw_date_splitted = raw_date.split("/")
+                                year = raw_date_splitted[2]
+                                month = raw_date_splitted[0]
+                                day = raw_date_splitted[1]
+                        if int(month) > 12:
+                            day, month = month, day
 
-        # Try to extract date
-        if not date:
-            for pattern in patterns:
-                date_match = re.search(pattern, text)
-                if date_match:
-                    raw_date = date_match.group(0)
+                        date = f"{year}-{month}-{day}"
+                        if args.debug:
+                            print(f"ISO date: {date}")
+
+            print(extract_date_hhmmss(text))
+
+            # Extract time (HH:MM:SS)
+            if not hhmmss:
+                time_match = re.search(r"\d{2}:\d{2}:\d{2}", text)
+                if time_match:
+                    raw_time = time_match.group(0)
                     if args.debug:
-                        print(f"extracted date: {raw_date}")
-                    match pattern:
-                        case r"\d{2}-\d{2}-\d{4}":
-                            raw_date_splitted = raw_date.split("-")
-                            year = raw_date_splitted[2]
-                            month = raw_date_splitted[0]
-                            day = raw_date_splitted[1]
-                            # date = f"{raw_date_splitted[2]}-{raw_date_splitted[0]}-{raw_date_splitted[1]}"
-                        case r"\d{2}/\d{2}/\d{4}":
-                            raw_date_splitted = raw_date.split("/")
-                            year = raw_date_splitted[2]
-                            month = raw_date_splitted[0]
-                            day = raw_date_splitted[1]
-                    if int(month) > 12:
-                        day, month = month, day
-
-                    date = f"{year}-{month}-{day}"
-                    flag_info = True
+                        print(f"extracted time: {raw_time}")
+                    hhmmss = raw_time.replace(":", "")
                     if args.debug:
-                        print(f"ISO date: {date}")
+                        print(f"HHMMSS: {hhmmss}")
 
-        # Extract time (HH:MM:SS)
-        if not hhmmss:
-            time_match = re.search(r"\d{2}:\d{2}:\d{2}", text)
-            if time_match:
-                raw_time = time_match.group(0)
-                if args.debug:
-                    print(f"extracted time: {raw_time}")
-                hhmmss = raw_time.replace(":", "")
-                if args.debug:
-                    print(f"HHMMSS: {hhmmss}")
-                flag_info = True
+            # Extract temperature in Fahrenheit (e.g., 73F)
+            if not temperature_f:
+                temp_f_match = re.search(r" \d+F ", text)
+                if temp_f_match:
+                    raw_temperature_f = temp_f_match.group(0)
+                    temperature_f = raw_temperature_f.strip()
 
-        # Extract temperature in Fahrenheit (e.g., 73F)
-        if not temperature_f:
-            temp_f_match = re.search(r" \d+F ", text)
-            if temp_f_match:
-                raw_temperature_f = temp_f_match.group(0)
-                temperature_f = raw_temperature_f.strip()
-                flag_info = True
+            # Extract temperature in Celsius (e.g., 23C)
+            if not temperature_c:
+                temp_c_match = re.search(r" \d+C ", text)
+                if temp_c_match:
+                    raw_temperature_c = temp_c_match.group(0)
+                    temperature_c = raw_temperature_c.strip()
 
-        # Extract temperature in Celsius (e.g., 23C)
-        if not temperature_c:
-            temp_c_match = re.search(r" \d+C ", text)
-            if temp_c_match:
-                raw_temperature_c = temp_c_match.group(0)
-                temperature_c = raw_temperature_c.strip()
-                flag_info = True
+            temp = extract_temperatures(text)
+            if temp["c"] or temp["f"]:
+                print(extract_temperatures(text))
 
-        # check for camera ID
-        text2 = text
-        if date:
-            text2 = text2.replace(raw_date, "")
-        if hhmmss:
-            text2 = text2.replace(raw_time, "")
-        if temperature_c:
-            text2 = text2.replace(f"{temperature_c}", "")
-        if temperature_f:
-            text2 = text2.replace(f"{temperature_f}", "")
+            # check for camera ID
+            text2 = text
+            if date:
+                text2 = text2.replace(raw_date, "")
+            if hhmmss:
+                text2 = text2.replace(raw_time, "")
+            if temperature_c:
+                text2 = text2.replace(f"{temperature_c}", "")
+            if temperature_f:
+                text2 = text2.replace(f"{temperature_f}", "")
 
-        while "  " in text2:
-            text2 = text2.replace("  ", " ")
-
-        if args.debug:
-            print(f"{text=}", file=sys.stderr)
-            print(f"{text2=}", file=sys.stderr)
-
-        if not cam_id:
-            if args.cam_id != "NO":
-                try:
-                    cam_id = sorted(text2.split(" "), key=len, reverse=True)[0]
-                except Exception:
-                    pass
+            while "  " in text2:
+                text2 = text2.replace("  ", " ")
 
             if args.debug:
-                print(f"{cam_id=}", file=sys.stderr)
+                print(f"{text=}", file=sys.stderr)
+                print(f"{text2=}", file=sys.stderr)
+
+            if not cam_id:
+                if args.cam_id != "NO":
+                    try:
+                        cam_id = sorted(text2.split(" "), key=len, reverse=True)[0]
+                    except Exception:
+                        pass
+
+                if args.debug:
+                    print(f"{cam_id=}", file=sys.stderr)
 
     return {
         "file_path": path_file,
         "file_name": Path(path_file).name,
-        "text": text,
+        "text": all_txt,
         "cam_id": cam_id,
         "date": date,
         "time": hhmmss,
@@ -437,12 +681,11 @@ def main():
     files = sorted(list(Path(input_dir).glob(args.pattern)))
 
     for file_path in files:
-        print(f"{str(file_path)=}", file=sys.stderr)
+        print(str(file_path), file=sys.stderr)
 
         data = extract_date_time(str(file_path), args)
 
         print(data)  # remove before release
-
 
         if args.debug:
             print(f"{data['temperature_c']=}   {data['temperature_f']=}")
