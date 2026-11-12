@@ -48,6 +48,7 @@ https://pyorbital.readthedocs.io/en/feature-moon-phase/moon_calculations.html
 
 import argparse
 import re
+import shutil
 import subprocess
 import sys
 from pathlib import Path
@@ -57,11 +58,14 @@ import pytesseract
 
 __version__ = "0.0.2"
 
-EXTENSIONS = {".avi", ".mp4", ".jpg", ".jpeg"}
+
+VIDEO_EXTENSIONS = (".avi", ".mp4", ".mov")
+IMAGES_EXTENSIONS = (".jpg", ".jpeg")
+EXTENSIONS = set(VIDEO_EXTENSIONS + IMAGES_EXTENSIONS)
 
 
 def banner_text_from_frame(
-    frame, roi_height_fraction: float = 0.15, debug=False, file_path=""
+    frame, args, roi_height_fraction: float = 0.15, file_path=""
 ):
     """
     extract text from frame banner
@@ -71,8 +75,10 @@ def banner_text_from_frame(
     # Get frame dimensions
     frame_height, frame_width, _ = frame.shape
 
-    if debug:
-        print(f"image original dimention: {frame_height}x{frame_width}")
+    if args.debug:
+        print(
+            f"image original dimention: {frame_height}x{frame_width}", file=sys.stderr
+        )
 
     if frame_width > 2592:
         aspect_ratio = frame_height / frame_width
@@ -81,8 +87,11 @@ def banner_text_from_frame(
         frame = cv2.resize(frame, (new_width, new_height))
         frame_height, frame_width, _ = frame.shape
 
-        if debug:
-            print(f"image resized dimention: {frame_height}x{frame_width}")
+        if args.debug:
+            print(
+                f"image resized dimention: {frame_height}x{frame_width}",
+                file=sys.stderr,
+            )
 
     # Define the region of interest (ROI)
     roi_height = int(frame_height * roi_height_fraction)
@@ -90,8 +99,8 @@ def banner_text_from_frame(
 
     # Save the first sampled frame for inspection
 
-    if file_path:
-        cv2.imwrite(Path(file_path).with_suffix(".jpeg"), roi)
+    if file_path and args.debug:
+        cv2.imwrite(Path("/tmp") / Path(file_path).with_suffix(".webp").name, roi)
 
     # Convert ROI to grayscale
     roi_gray = cv2.cvtColor(roi, cv2.COLOR_BGR2GRAY)
@@ -99,24 +108,25 @@ def banner_text_from_frame(
     # Apply OCR to extract text
     try:
         extracted_text = pytesseract.image_to_string(roi_gray, config="--psm 6")
-    except Exception:
-        print("Tesseract error")
+    except Exception as e:
+        print("Tesseract error: {e}", file=sys.stderr)
         sys.exit()
 
-    if debug:
-        print(f"{extracted_text=}")
+    if args.debug:
+        print(f"{extracted_text=}", file=sys.stderr)
 
     return extracted_text
 
 
 def extract_banner_text_from_video(
-    video_path, frame_interval=30, roi_height_fraction=0.15, debug=False
+    video_path, args, frame_interval=30, roi_height_fraction=0.15
 ):
     """
     Extracts text from the bottom banner of a video.
 
     Args:
         video_path (str): Path to the video file.
+        args: argmuents
         output_frame_path (str): Path to save a sample frame for inspection.
         frame_interval (int): Interval at which frames are sampled.
         roi_height_fraction (float): Fraction of the frame height that contains the banner.
@@ -139,7 +149,7 @@ def extract_banner_text_from_video(
 
         # Process every `frame_interval` frame
         if frame_count % frame_interval == 0:
-            extracted_text = banner_text_from_frame(frame, roi_height_fraction, debug)
+            extracted_text = banner_text_from_frame(frame, roi_height_fraction, args)
             break
 
         frame_count += 1
@@ -150,7 +160,7 @@ def extract_banner_text_from_video(
     return extracted_text
 
 
-def extract_banner_text_from_image(image_path, roi_height_fraction=0.15, debug=False):
+def extract_banner_text_from_image(image_path, args, roi_height_fraction=0.15):
     """
     extract text contained in the bottom banner of an image
     """
@@ -159,129 +169,137 @@ def extract_banner_text_from_image(image_path, roi_height_fraction=0.15, debug=F
         return "Error: Unable to load the image. Check the file path."
 
     extracted_text = banner_text_from_frame(
-        frame, roi_height_fraction, debug=debug, file_path=image_path
+        frame, args, roi_height_fraction, file_path=image_path
     )
 
     return extracted_text
 
 
-def extract_date_time(path_file, debug=False):
+def extract_date_time(path_file, args):
     """
     extract info from the picture/video banner
     """
 
     banner_text = None
 
-    if Path(path_file).suffix.lower() in (".avi", ".mp4"):
-        banner_text = extract_banner_text_from_video(path_file, debug=debug)
+    if Path(path_file).suffix.lower() in VIDEO_EXTENSIONS:
+        banner_text = extract_banner_text_from_video(path_file, args)
 
-    if Path(path_file).suffix.lower() in (".jpg", ".jpeg"):
-        banner_text = extract_banner_text_from_image(path_file, debug=debug)
+    if Path(path_file).suffix.lower() in IMAGES_EXTENSIONS:
+        banner_text = extract_banner_text_from_image(path_file, args)
 
-    if banner_text is None:
-        return {"error": ""}
+
 
     patterns = [r"\d{2}-\d{2}-\d{4}", r"\d{2}/\d{2}/\d{4}"]
 
-    for text in banner_text.split("\n"):
+    temperature_f = ""
+    date = ""
+    temperature_c = ""
+    cam_id = ""
+    hhmmss = ""
+
+    if banner_text is not None:
+        for text in banner_text.split("\n"):
         # The input string
         # text = "@ FOSA_01 73F 23C @ 06-09-2023 13:41:51"
         # text = "oo) @M-5°C / 23°F. 17/02/2025 00:09:12 = S.F. Attimis\n"
 
         flag_info = False
-        flag_date_found = False
 
         # Try to extract date
-        date = None
-        for pattern in patterns:
-            date_match = re.search(pattern, text)
-            if date_match:
-                raw_date = date_match.group(0)
-                if debug:
-                    print(f"extracted date: {raw_date}")
-                match pattern:
-                    case r"\d{2}-\d{2}-\d{4}":
-                        raw_date_splitted = raw_date.split("-")
-                        date = f"{raw_date_splitted[2]}-{raw_date_splitted[0]}-{raw_date_splitted[1]}"
-                    case r"\d{2}/\d{2}/\d{4}":
-                        raw_date_splitted = raw_date.split("/")
-                        date = f"{raw_date_splitted[2]}-{raw_date_splitted[0]}-{raw_date_splitted[1]}"
-                flag_info = True
-                if debug:
-                    print(f"ISO date: {date}")
+        if not date:
+            for pattern in patterns:
+                date_match = re.search(pattern, text)
+                if date_match:
+                    raw_date = date_match.group(0)
+                    if args.debug:
+                        print(f"extracted date: {raw_date}")
+                    match pattern:
+                        case r"\d{2}-\d{2}-\d{4}":
+                            raw_date_splitted = raw_date.split("-")
+                            year = raw_date_splitted[2]
+                            month = raw_date_splitted[0]
+                            day = raw_date_splitted[1]
+                            # date = f"{raw_date_splitted[2]}-{raw_date_splitted[0]}-{raw_date_splitted[1]}"
+                        case r"\d{2}/\d{2}/\d{4}":
+                            raw_date_splitted = raw_date.split("/")
+                            year = raw_date_splitted[2]
+                            month = raw_date_splitted[0]
+                            day = raw_date_splitted[1]
+                    if int(month) > 12:
+                        day, month = month, day
 
-        if date is None:
-            continue
+                    date = f"{year}-{month}-{day}"
+                    flag_info = True
+                    if args.debug:
+                        print(f"ISO date: {date}")
 
         # Extract time (HH:MM:SS)
-        time_match = re.search(r"\d{2}:\d{2}:\d{2}", text)
-        if time_match:
-            raw_time = time_match.group(0)
-            if debug:
-                print(f"extracted time: {raw_time}")
-            hhmmss = raw_time.replace(":", "")
-            if debug:
-                print(f"HHMMSS: {hhmmss}")
-            flag_info = True
-        else:
-            continue
+        if not hhmmss:
+            time_match = re.search(r"\d{2}:\d{2}:\d{2}", text)
+            if time_match:
+                raw_time = time_match.group(0)
+                if args.debug:
+                    print(f"extracted time: {raw_time}")
+                hhmmss = raw_time.replace(":", "")
+                if args.debug:
+                    print(f"HHMMSS: {hhmmss}")
+                flag_info = True
 
         # Extract temperature in Fahrenheit (e.g., 73F)
-        temperature_f = None
-        temp_f_match = re.search(r" \d+F ", text)
-        if temp_f_match:
-            raw_temperature_f = temp_f_match.group(0)
-            temperature_f = raw_temperature_f.strip()
-            flag_info = True
+        if not temperature_f:
+            temp_f_match = re.search(r" \d+F ", text)
+            if temp_f_match:
+                raw_temperature_f = temp_f_match.group(0)
+                temperature_f = raw_temperature_f.strip()
+                flag_info = True
 
         # Extract temperature in Celsius (e.g., 23C)
-        temperature_c = None
-        temp_c_match = re.search(r" \d+C ", text)
-        if temp_c_match:
-            raw_temperature_c = temp_c_match.group(0)
-            temperature_c = raw_temperature_c.strip()
-            flag_info = True
+        if not temperature_c:
+            temp_c_match = re.search(r" \d+C ", text)
+            if temp_c_match:
+                raw_temperature_c = temp_c_match.group(0)
+                temperature_c = raw_temperature_c.strip()
+                flag_info = True
 
-        if flag_info:
-            # check for camera ID
-            text2 = text
-            if date:
-                text2 = text2.replace(raw_date, "")
-            if hhmmss:
-                text2 = text2.replace(raw_time, "")
-            if temperature_c:
-                text2 = text2.replace(f"{temperature_c}", "")
-            if temperature_f:
-                text2 = text2.replace(f"{temperature_f}", "")
+        # check for camera ID
+        text2 = text
+        if date:
+            text2 = text2.replace(raw_date, "")
+        if hhmmss:
+            text2 = text2.replace(raw_time, "")
+        if temperature_c:
+            text2 = text2.replace(f"{temperature_c}", "")
+        if temperature_f:
+            text2 = text2.replace(f"{temperature_f}", "")
 
-            while "  " in text2:
-                text2 = text2.replace("  ", " ")
+        while "  " in text2:
+            text2 = text2.replace("  ", " ")
 
-            if debug:
-                print(f"{text=}")
-                print(f"{text2=}")
+        if args.debug:
+            print(f"{text=}", file=sys.stderr)
+            print(f"{text2=}", file=sys.stderr)
 
-            cam_id = None
-            try:
-                cam_id = sorted(text2.split(" "), key=len, reverse=True)[0]
-            except Exception:
-                pass
+        if not cam_id:
+            if args.cam_id != "NO":
+                try:
+                    cam_id = sorted(text2.split(" "), key=len, reverse=True)[0]
+                except Exception:
+                    pass
 
-            if debug:
-                print(f"{cam_id=}")
+            if args.debug:
+                print(f"{cam_id=}", file=sys.stderr)
 
-            return {
-                "text": text,
-                "cam_id": cam_id,
-                "date": date,
-                "time": hhmmss,
-                "temperature_c": temperature_c,
-                "temperature_f": temperature_f,
-            }
-        else:
-            return {"error": ""}
-
-    return {"error": ""}
+    return {
+        "file_path": path_file,
+        "file_name": Path(path_file).name,
+        "text": text,
+        "cam_id": cam_id,
+        "date": date,
+        "time": hhmmss,
+        "temperature_c": temperature_c,
+        "temperature_f": temperature_f,
+    }
 
 
 def get_new_file_path(args, file_path: Path, data: dict) -> Path:
@@ -292,10 +310,13 @@ def get_new_file_path(args, file_path: Path, data: dict) -> Path:
         dir = Path(args.output_directory)
     else:
         dir = Path(file_path).parent
-    new_file_path = (
-        dir
-        / f"{data['date']}_{data['time']}_{data['cam_id']}{'_' if data['cam_id'] else ''}{file_path.name}"
-    )
+    if args.rename and (data["date"] and data["time"]):
+        suffix = f"{data['date']}_{data['time']}"
+        if data["cam_id"]:
+            suffix += f"_{data['cam_id']}"
+        new_file_path = dir / f"{suffix}|{file_path.name}"
+    else:
+        new_file_path = dir / file_path.name
     return new_file_path
 
 
@@ -305,7 +326,7 @@ def parse_arguments():
     """
 
     parser = argparse.ArgumentParser(
-        description="Extract and rename picture and video files with date/time extracted from banner"
+        description="Extract and optionally rename picture and video files with date/time extracted from banner"
     )
 
     parser.add_argument(
@@ -384,8 +405,6 @@ def parse_arguments():
 def main():
     args = parse_arguments()
 
-    print(f"{args.cam_id=}")
-
     if args.version:
         print(f"camtrap_banner_decoder v. {__version__}\n")
         sys.exit()
@@ -394,63 +413,69 @@ def main():
         if args.tesseract_cmd == "tesseract" or Path(args.tesseract_cmd).is_file():
             pytesseract.pytesseract.tesseract_cmd = args.tesseract_cmd
             if args.tesseract_cmd != "tesseract":
-                print(f"Using {args.tesseract_cmd}")
+                print(f"Using {args.tesseract_cmd}", file=sys.stderr)
         else:
-            print(f"The tesseract path {args.tesseract_cmd} was not found")
+            print(
+                f"The tesseract path {args.tesseract_cmd} was not found",
+                file=sys.stderr,
+            )
             sys.exit()
 
     if Path(args.input_directory).is_dir():
         input_dir = args.input_directory
     else:
-        print(f"Directory {args.input_directory} not found")
+        print(f"Directory {args.input_directory} not found", file=sys.stderr)
         sys.exit()
 
     if args.debug:
         print(f"{input_dir=}")
 
     if args.output_directory and not Path(args.output_directory).is_dir():
-        print(f"Output directory {args.output_directory} not found")
+        print(f"Output directory {args.output_directory} not found", file=sys.stderr)
         sys.exit()
 
     files = sorted(list(Path(input_dir).glob(args.pattern)))
 
     for file_path in files:
-        if args.debug:
-            print(f"{file_path=}")
+        print(f"{str(file_path)=}", file=sys.stderr)
 
-        data = extract_date_time(str(file_path), debug=args.debug)
-        if "error" in data:
-            print(f"Date and time not found in {file_path}")
-            print("-" * 30)
-            continue
+        data = extract_date_time(str(file_path), args)
+
+        print(data)  # remove before release
+
 
         if args.debug:
             print(f"{data['temperature_c']=}   {data['temperature_f']=}")
 
-        if data["date"] and data["time"]:
-            if args.cam_id == "NO":  # , "EXTRACT"):
-                data["cam_id"] = ""
-            elif args.cam_id != "EXTRACT":
-                data["cam_id"] = args.cam_id
-            else:
-                if data["cam_id"] is None:
-                    data["cam_id"] = "CAM-ID"
+        # if data["date"] and data["time"]:
 
-            new_file_path = get_new_file_path(args, file_path, data)
+        if args.cam_id == "NO":  # , "EXTRACT"):
+            data["cam_id"] = ""
+        elif args.cam_id == "EXTRACT":
+            if data["cam_id"] is None:
+                data["cam_id"] = "CAM-ID"
+        else:
+            data["cam_id"] = args.cam_id
 
-            # check if file already renamed
-            if str(Path(file_path).name).count("-") == 2:
-                print(f"{Path(file_path).name} already renammed")
+        new_file_path = get_new_file_path(args, file_path, data)
+
+        if args.output_directory:
+            if new_file_path.is_file():
+                print(f"{Path(new_file_path).name} already exists")
             else:
                 if args.reencode:
-                    if file_path.with_suffix(".mp4").is_file():
+                    if Path(file_path).suffix.lower() in VIDEO_EXTENSIONS:
+                        next_ext = ".webm"
+                    if Path(file_path).suffix.lower() in IMAGES_EXTENSIONS:
+                        next_ext = ".webp"
+                    if new_file_path.with_suffix(next_ext).is_file():
                         print(
-                            f"Error re-encoding: {file_path.with_suffix('.mp4')} already exists"
+                            f"Error re-encoding: {new_file_path.with_suffix(next_ext)} already exists"
                         )
                     else:
-                        command = f'{args.ffmpeg_path} -i "{file_path}" "{file_path.with_suffix(".mp4")}"'
+                        command = f'{args.ffmpeg_path} -i "{file_path}" "{new_file_path.with_suffix(next_ext)}"'
                         print(
-                            f"re-encoding {file_path.name} to {file_path.with_suffix('.mp4').name}"
+                            f"re-encoding {file_path.name} to {new_file_path.with_suffix(next_ext)}"
                         )
                         p = subprocess.Popen(
                             command,
@@ -460,47 +485,47 @@ def main():
                         )
                         out, error = p.communicate()
 
-                        file_path = file_path.with_suffix(".mp4")
-
-                        new_file_path = get_new_file_path(args, file_path, data)
-
-                if args.rename:
-                    if new_file_path.is_file():
-                        print(f"{Path(new_file_path).name} already exists")
-                    else:
-                        file_path.rename(new_file_path)
-                        print(
-                            f"{Path(file_path).name} renamed to {Path(new_file_path).name}"
-                        )
-                        # save into metadata
-                        time_exiftool = f"{data['time'][0:2]}:{data['time'][2:4]}:{data['time'][4:6]}"
-                        command = (
-                            f"{args.exiftool_path} "
-                            f'-DateTimeOriginal="{data["date"]} {time_exiftool}" '
-                            f'-CreateDate="{data["date"]} {time_exiftool}" '
-                            f'-ModifyDate="{data["date"]} {time_exiftool}" '
-                            f'-MediaCreateDate="{data["date"]} {time_exiftool}" '
-                            f'-MediaModifyDate="{data["date"]} {time_exiftool}" '
-                            f'-TrackCreateDate="{data["date"]} {time_exiftool}" '
-                            f'-TrackModifyDate="{data["date"]} {time_exiftool}" '
-                            f"-overwrite_original {new_file_path}"
-                        )
-
-                        p = subprocess.Popen(
-                            command,
-                            stdout=subprocess.PIPE,
-                            stderr=subprocess.PIPE,
-                            shell=True,
-                        )
-                        out, error = p.communicate()
+                        new_file_path = new_file_path.with_suffix(next_ext)
                 else:
-                    if new_file_path.is_file():
-                        print(f"{Path(new_file_path).name} already exists")
-                    else:
-                        print(
-                            f"rename {Path(file_path).name} to {Path(new_file_path).name}"
-                        )
-        print("-" * 30)
+                    # copy file
+                    shutil.copy(file_path, new_file_path)
+                    print(f"{Path(file_path).name} copied to {Path(new_file_path)}")
+
+                # save into metadata
+                time_exiftool = (
+                    f"{data['time'][0:2]}:{data['time'][2:4]}:{data['time'][4:6]}"
+                )
+                command = (
+                    f"{args.exiftool_path} "
+                    f'-DateTimeOriginal="{data["date"]} {time_exiftool}" '
+                    f'-CreateDate="{data["date"]} {time_exiftool}" '
+                    f'-ModifyDate="{data["date"]} {time_exiftool}" '
+                    f'-MediaCreateDate="{data["date"]} {time_exiftool}" '
+                    f'-MediaModifyDate="{data["date"]} {time_exiftool}" '
+                    f'-TrackCreateDate="{data["date"]} {time_exiftool}" '
+                    f'-TrackModifyDate="{data["date"]} {time_exiftool}" '
+                    f'-overwrite_original "{new_file_path}"'
+                )
+
+                p = subprocess.Popen(
+                    command,
+                    stdout=subprocess.PIPE,
+                    stderr=subprocess.PIPE,
+                    shell=True,
+                )
+                out, error = p.communicate()
+        else:
+            """
+            if new_file_path.is_file():
+                print(f"{Path(new_file_path).name} already exists")
+            else:
+                print(
+                    f"rename {Path(file_path).name} to {Path(new_file_path).name}"
+                )
+            """
+
+        if args.debug:
+            print("-" * 30, file=sys.stderr)
 
 
 if __name__ == "__main__":
